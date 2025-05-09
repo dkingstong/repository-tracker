@@ -1,0 +1,10 @@
+services:
+  db:
+    image: postgis/postgis:14-3.3-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: db_test
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - '32888:5432'
