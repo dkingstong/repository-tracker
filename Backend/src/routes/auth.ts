@@ -23,14 +23,26 @@ router.get(
       // Get user data
       const userData = await getGithubUser(accessToken)
       const userEntity = AppDataSource.getRepository(User);
-      //store data in db
 
-      const user = await userEntity.save({
-        githubId: userData.id,
-        email: userData.email || '',
-        firstName: userData.name || '',
-        lastName: userData.name || '',
-      });
+      let user = null;
+      //store user in db if not exists
+      const existingUser = await userEntity.findOne({
+        where: {
+          githubId: userData.id
+        }
+      })
+
+      if (!existingUser) {
+        //store data in db
+        user = await userEntity.save({
+          githubId: userData.id,
+          email: userData.email ?? '',  
+          firstName: userData.name ?? '',
+          lastName: userData.name ?? '',
+        });
+      } else {
+        user = existingUser;
+      }
       
       // Store the token and user data
       res.cookie('github_token', accessToken, {

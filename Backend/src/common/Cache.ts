@@ -9,7 +9,15 @@ export function setCache(key: string, data: any) {
 }
 
 export function deleteCache(key: string) {
-  delete cache[key];
+  // cacheKey can be like user-repositories:id:*
+  const deleteAll = key.split('').pop() === '*';
+  if (deleteAll) {
+    const newKey = key.split('').slice(0, -1).join('');
+    const keys = Object.keys(cache).filter(k => k.startsWith(newKey));
+    keys.forEach(k => delete cache[k]);
+  } else {
+    delete cache[key];
+  }
 }
 
 export async function getOrAddCache(key: string, callback: () => Promise<any>) {

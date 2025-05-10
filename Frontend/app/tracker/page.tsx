@@ -154,7 +154,7 @@ export default function Tracker() {
       setUser(data?.getUserRepositories.user)
       setRepositories(data?.getUserRepositories.userRepositories)
     }
-  }, [data])
+  }, [data, filter, sort])
 
   const addRepository = async () => {
     if (!newRepoUrl) return
