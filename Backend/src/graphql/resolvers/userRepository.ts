@@ -4,7 +4,8 @@ import { Repository } from '../../data/entities/repository';
 import { fetchGitHubLatestRelease } from '../../services/githubService';
 import { GraphQLContext } from '../../middleware/authMiddleware';
 import { getOrAddCache, deleteCache } from '../../common/Cache';
-import { User } from '../../data/entities/user';
+import AppError from '../../common/AppError';
+import { UserRepository as UserRepositoryType } from '../../graphql/types';
 
 interface RepositoryFilterInput {
   search?: string;
@@ -34,7 +35,9 @@ export const userRepositoryResolvers = {
         let query = userRepositoryEntity
           .createQueryBuilder('userRepository')
           .leftJoinAndSelect('userRepository.repository', 'repository')
-          .where('userRepository.userId = :userId', { userId: id });
+          .where('userRepository.userId = :userId', { userId: id })
+          .leftJoinAndSelect('userRepository.user', 'user')
+          .where('user.id = :userId', { userId: id });
         
         // Apply filters if provided
         if (filter) {
@@ -89,30 +92,18 @@ export const userRepositoryResolvers = {
           };
         });
         
-        return userRepositoriesWithRepository;
+        return {
+          userRepositories: userRepositoriesWithRepository,
+          user: {
+            id: userRepositoriesData[0].user.id,
+            githubId: userRepositoriesData[0].user.githubId,
+            email: userRepositoriesData[0].user.email,
+            firstName: userRepositoriesData[0].user.firstName,
+          }
+        };
       });
       
-      const userEntity = AppDataSource.getRepository(User);
-      const user = await userEntity.findOne({
-        where: { id }
-      });
-      
-      if (!user) {
-        throw new Error('User not found');
-      }
-      
-      const userRepositoriesResponse = {
-        user: {
-          id: user.id,
-          githubId: user.githubId,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-        },
-        userRepositories,
-      };
-      
-      return userRepositoriesResponse;
+      return userRepositories;
     }
   },
   
@@ -120,12 +111,12 @@ export const userRepositoryResolvers = {
     createUserRepository: async (_: any, { owner, name }: { owner: string, name: string }, context: GraphQLContext) => {
       const { token, id } = context.user;
       const userRepositoryEntity = AppDataSource.getRepository(UserRepository);
-      // check if repository already exists
+      // check if repository is already followed
       const existingUserRepository = await userRepositoryEntity.findOne({
         where: { userId: id, repository: { owner, name } }
       });
       if (existingUserRepository) {
-        throw new Error('Repository already followed');
+        throw AppError.BadRequest('Repository already followed');
       }
       let githubRepoId;
       let data;
@@ -134,11 +125,11 @@ export const userRepositoryResolvers = {
         githubRepoId = data.id;
       } catch (error) {
         console.error('error', error);
-        throw new Error('Failed to fetch repository data from GitHub');
+        throw AppError.InternalServerError('Failed to fetch repository data from GitHub');
       }
 
       if (!githubRepoId) {
-        throw new Error('Missing required fields: githubRepoId');
+        throw AppError.InternalServerError('Missing required fields: githubRepoId');
       }
 
       const repositoryEntity = AppDataSource.getRepository(Repository);
@@ -180,16 +171,24 @@ export const userRepositoryResolvers = {
           seen: false
         };
       }
-      existingRepository.latestReleaseDescription = data.body;
-      existingRepository.latestReleaseVersion = data.tag_name;
-      existingRepository.latestReleaseDate = data.published_at;
-      await repositoryEntity.save(existingRepository);
 
-      await userRepositoryEntity.update({
-        repositoryId: existingRepository.id
-      }, {
-        seen: false
-      });
+      //check if the old data is different from the new data I think comparing release version is enough
+      const updateRepositoriesToUnseen = existingRepository.latestReleaseVersion !== data.tag_name;
+
+      if (updateRepositoriesToUnseen) {
+        existingRepository.latestReleaseDescription = data.body;
+        existingRepository.latestReleaseVersion = data.tag_name;
+        existingRepository.latestReleaseDate = data.published_at;
+
+        await repositoryEntity.save(existingRepository);
+
+        // this is updating all other user repositories to unseen, so that other users see there is a new release 
+        await userRepositoryEntity.update({
+          repositoryId: existingRepository.id
+        }, {
+          seen: false
+        });
+      }
 
       const newUserRepository = await userRepositoryEntity.insert({
         userId: id,
@@ -250,13 +249,14 @@ export const userRepositoryResolvers = {
     syncUserRepositories: async (_: any, __: any, context: GraphQLContext) => {
       const { token, id: userId } = context.user;
       const userRepositoryEntity = AppDataSource.getRepository(UserRepository);
+      const repositoryEntity = AppDataSource.getRepository(Repository);
+      const userRepositoriesResponse: Omit<UserRepositoryType, 'user'>[] = [];
       const userRepositories = await userRepositoryEntity.find({
         where: { userId },
         relations: ['repository']
       });
-      const repositoryEntity = AppDataSource.getRepository(Repository);
-      const userRepositoriesResponse = [];
-      for (const userRepository of userRepositories) {
+      // TODO: Add pagination or maybe limit the parallel requests
+      Promise.all(userRepositories.map(async (userRepository) => {
         const data = await fetchGitHubLatestRelease(token, userRepository.repository.owner, userRepository.repository.name);
         userRepository.repository.latestReleaseDescription = data.body;
         userRepository.repository.latestReleaseVersion = data.tag_name;
@@ -278,7 +278,7 @@ export const userRepositoryResolvers = {
           }
         }
         userRepositoriesResponse.push(userRepositoryResponse);
-      }
+      }));
       
       // Clear all user repository caches for this user
       deleteCache(`user-repositories:${userId}*`);
