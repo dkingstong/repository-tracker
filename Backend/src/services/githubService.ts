@@ -1,6 +1,7 @@
 import { Octokit } from "@octokit/rest";
 import secrets from '../config/secrets'
 import { getCache, setCache } from '../common/Cache';
+import AppError from "../common/AppError";
 
 // TODO: Validate response from github
 
@@ -43,11 +44,11 @@ export async function fetchGitHubLatestRelease(accessToken: string, owner: strin
 
     if (err.status === 404) {
       console.log("❌ No releases found for this repository.", owner, repo);
-      return null;
+      throw AppError.NotFound('No releases found for this repository');
     }
 
     console.error('❌ GitHub API error:', err.message);
-    throw new Error(`GitHub API error: ${err.message}`);
+    throw AppError.InternalServerError(`GitHub API error: ${err.message}`);
   }
 }
 

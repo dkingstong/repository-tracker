@@ -6,6 +6,7 @@ import { GraphQLContext } from '../../middleware/authMiddleware';
 import { getOrAddCache, deleteCache } from '../../common/Cache';
 import AppError from '../../common/AppError';
 import { UserRepository as UserRepositoryType } from '../../graphql/types';
+import { User } from '../../data/entities/user';
 
 interface RepositoryFilterInput {
   search?: string;
@@ -27,7 +28,7 @@ export const userRepositoryResolvers = {
       const filterKey = filter ? JSON.stringify(filter) : '';
       const orderKey = order ? JSON.stringify(order) : '';
       const cacheKey = `user-repositories:${id}:${filterKey}:${orderKey}`;
-      
+
       const userRepositories = await getOrAddCache(cacheKey, async () => {
         const userRepositoryEntity = AppDataSource.getRepository(UserRepository);
         
@@ -36,8 +37,6 @@ export const userRepositoryResolvers = {
           .createQueryBuilder('userRepository')
           .leftJoinAndSelect('userRepository.repository', 'repository')
           .where('userRepository.userId = :userId', { userId: id })
-          .leftJoinAndSelect('userRepository.user', 'user')
-          .where('user.id = :userId', { userId: id });
         
         // Apply filters if provided
         if (filter) {
@@ -92,18 +91,27 @@ export const userRepositoryResolvers = {
           };
         });
         
-        return {
-          userRepositories: userRepositoriesWithRepository,
-          user: {
-            id: userRepositoriesData[0].user.id,
-            githubId: userRepositoriesData[0].user.githubId,
-            email: userRepositoriesData[0].user.email,
-            firstName: userRepositoriesData[0].user.firstName,
-          }
-        };
+        return userRepositoriesWithRepository;
       });
-      
-      return userRepositories;
+
+      const user = await AppDataSource.getRepository(User).findOne({
+        where: { id }
+      });
+
+      if (!user) {
+        throw AppError.InternalServerError('User not found');
+      }
+
+      return {
+        userRepositories,
+        user: {
+          id: user.id,
+          githubId: user.githubId,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+        }
+      };
     }
   },
   
@@ -118,16 +126,8 @@ export const userRepositoryResolvers = {
       if (existingUserRepository) {
         throw AppError.BadRequest('Repository already followed');
       }
-      let githubRepoId;
-      let data;
-      try {
-        data = await fetchGitHubLatestRelease(token, owner, name);
-        githubRepoId = data.id;
-      } catch (error) {
-        console.error('error', error);
-        throw AppError.InternalServerError('Failed to fetch repository data from GitHub');
-      }
-
+      const data = await fetchGitHubLatestRelease(token, owner, name);
+      const githubRepoId = data.id;
       if (!githubRepoId) {
         throw AppError.InternalServerError('Missing required fields: githubRepoId');
       }
