@@ -3,6 +3,7 @@
 * Needs v18.17.0. installed. You can install nvm to use different versions easily.
 * Verify npm is installed as well
 * Make sure to set up the env variables for both the backend and frontend
+* Need docker installed
 
 ## Frontend
 
