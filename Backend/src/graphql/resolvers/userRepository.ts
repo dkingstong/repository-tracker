@@ -152,7 +152,14 @@ export const userRepositoryResolvers = {
           repositoryId: savedRepository.identifiers[0].id
         });
         
-        // Clear all user repository caches for this user
+        const newRepository = await repositoryEntity.findOne({
+          where: { id: savedRepository.identifiers[0].id }
+        });
+
+        if (!newRepository) {
+          throw AppError.InternalServerError('Repository not found');
+        }
+        
         deleteCache(`user-repositories:${id}*`);
         
         return {
@@ -160,12 +167,12 @@ export const userRepositoryResolvers = {
           repository: {
             id: savedRepository.identifiers[0].id,
             githubRepoId: savedRepository.identifiers[0].githubRepoId,
-            owner: savedRepository.identifiers[0].owner,
-            name: savedRepository.identifiers[0].name,
+            owner: newRepository.owner,
+            name: newRepository.name,
             latestRelease: {
-              version: savedRepository.identifiers[0].latestReleaseVersion,
-              description: savedRepository.identifiers[0].latestReleaseDescription,
-              releaseDate: savedRepository.identifiers[0].latestReleaseDate
+              version: newRepository.latestReleaseVersion,
+              description: newRepository.latestReleaseDescription,
+              releaseDate: newRepository.latestReleaseDate
             }
           },
           seen: false
@@ -250,19 +257,24 @@ export const userRepositoryResolvers = {
       const { token, id: userId } = context.user;
       const userRepositoryEntity = AppDataSource.getRepository(UserRepository);
       const repositoryEntity = AppDataSource.getRepository(Repository);
-      const userRepositoriesResponse: Omit<UserRepositoryType, 'user'>[] = [];
       const userRepositories = await userRepositoryEntity.find({
         where: { userId },
         relations: ['repository']
       });
+      // TODO: If the repository has updates, we should update the users repositories seen to false
       // TODO: Add pagination or maybe limit the parallel requests
-      Promise.all(userRepositories.map(async (userRepository) => {
+      // TODO: rate limit the requests
+      const userRepositoriesResponse = await Promise.all(userRepositories.map(async (userRepository) => {
         const data = await fetchGitHubLatestRelease(token, userRepository.repository.owner, userRepository.repository.name);
+        if(userRepository.repository.latestReleaseVersion !== data.tag_name) {
+          userRepository.seen = false;
+        }
         userRepository.repository.latestReleaseDescription = data.body;
         userRepository.repository.latestReleaseVersion = data.tag_name;
         userRepository.repository.latestReleaseDate = data.published_at;
         await repositoryEntity.save(userRepository.repository);
-        const userRepositoryResponse = {
+        await userRepositoryEntity.save(userRepository);
+        return {
           id: userRepository.id,
           seen: userRepository.seen,
           repository: {
@@ -277,7 +289,6 @@ export const userRepositoryResolvers = {
             }
           }
         }
-        userRepositoriesResponse.push(userRepositoryResponse);
       }));
       
       // Clear all user repository caches for this user
