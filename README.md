@@ -7,11 +7,14 @@
 
 ## Frontend
 
-1.- Go into the Frontend folder
+1.- Create an env.local file with:
+  NEXT_PUBLIC_GITHUB_REDIRECT_URI=http://localhost:8080/auth/callback
+  NEXT_PUBLIC_GITHUB_CLIENT_ID={clientId}
+2.- Go into the Frontend folder
 
-2.- Run npm ci - installs dependencies
+3.- Run npm ci - installs dependencies
 
-3.- Run npm run dev - starts the server
+4.- Run npm run dev - starts the server
 
 ## Backend
 
